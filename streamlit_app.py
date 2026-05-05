@@ -1,8 +1,10 @@
 import streamlit as st
 import json
 import datetime
+import os
 from typing import List, Dict, Any
 import pandas as pd
+from config import DEFAULT_PASSWORD
 
 # Datenmodell für Ausgaben
 class Expense:
@@ -33,20 +35,46 @@ class Expense:
     def is_cash_withdrawal(self) -> bool:
         return self.description == 'Bezug'
 
-# Datenverwaltung
+# Datenverwaltung mit Datei-Persistenz
 class DataService:
+    DATA_FILE = "geld_data.json"
+    
+    @staticmethod
+    def load_data() -> Dict[str, Any]:
+        """Lädt alle Daten aus der JSON-Datei"""
+        if os.path.exists(DataService.DATA_FILE):
+            try:
+                with open(DataService.DATA_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        return {"password": None, "expenses": []}
+    
+    @staticmethod
+    def save_data(data: Dict[str, Any]):
+        """Speichert alle Daten in die JSON-Datei"""
+        try:
+            with open(DataService.DATA_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            st.error(f"Fehler beim Speichern der Daten: {e}")
+    
     @staticmethod
     def get_expenses() -> List[Expense]:
-        if 'expenses' not in st.session_state:
-            st.session_state.expenses = []
-        return st.session_state.expenses
+        """Lädt Ausgaben aus der Datei"""
+        data = DataService.load_data()
+        return [Expense.from_dict(exp) for exp in data.get("expenses", [])]
     
     @staticmethod
     def save_expenses(expenses: List[Expense]):
-        st.session_state.expenses = expenses
+        """Speichert Ausgaben in die Datei"""
+        data = DataService.load_data()
+        data["expenses"] = [exp.to_dict() for exp in expenses]
+        DataService.save_data(data)
     
     @staticmethod
     def add_expense(expense: Expense) -> Expense:
+        """Fügt neue Ausgabe hinzu"""
         expenses = DataService.get_expenses()
         new_id = max([e.id for e in expenses], default=0) + 1
         new_expense = Expense(new_id, expense.date, expense.price, expense.description)
@@ -56,6 +84,7 @@ class DataService:
     
     @staticmethod
     def update_expense(expense: Expense):
+        """Aktualisiert bestehende Ausgabe"""
         expenses = DataService.get_expenses()
         for i, e in enumerate(expenses):
             if e.id == expense.id:
@@ -65,21 +94,37 @@ class DataService:
     
     @staticmethod
     def delete_expense(expense_id: int):
+        """Löscht Ausgabe"""
         expenses = DataService.get_expenses()
         expenses = [e for e in expenses if e.id != expense_id]
         DataService.save_expenses(expenses)
     
     @staticmethod
     def get_password() -> str:
-        return st.session_state.get('password', '')
+        """Lädt Passwort aus der Datei"""
+        data = DataService.load_data()
+        return data.get("password", "")
     
     @staticmethod
     def set_password(password: str):
-        st.session_state.password = password
+        """Setzt Passwort nur wenn noch keines existiert"""
+        data = DataService.load_data()
+        if data.get("password") is None:
+            data["password"] = password
+            DataService.save_data(data)
+            return True
+        return False
     
     @staticmethod
     def is_password_set() -> bool:
-        return bool(DataService.get_password())
+        """Prüft ob Passwort bereits gesetzt ist"""
+        data = DataService.load_data()
+        return data.get("password") is not None and data.get("password") != ""
+    
+    @staticmethod
+    def verify_password(password: str) -> bool:
+        """Verifiziert das Passwort"""
+        return DataService.get_password() == password
 
 # Hilfsfunktionen
 def format_month(month_key: str) -> str:
@@ -120,6 +165,14 @@ def login_page():
     with col2:
         st.markdown("---")
         
+        # Prüfen ob Passwort bereits gesetzt ist
+        is_password_set = DataService.is_password_set()
+        
+        if not is_password_set:
+            st.info("🔑 Erster Start - Passwort wird initialisiert")
+            st.info(f"Standard-Passwort: **{DEFAULT_PASSWORD}**")
+            st.info("Sie können dieses Passwort beim ersten Login verwenden oder ein eigenes festlegen.")
+        
         password = st.text_input("Passwort", type="password", key="login_password")
         
         if st.button("Login", use_container_width=True):
@@ -127,20 +180,23 @@ def login_page():
                 st.error("Passwort darf nicht leer sein")
                 return
             
-            if not DataService.is_password_set():
+            if not is_password_set:
                 # Erster Start - Passwort setzen
-                DataService.set_password(password)
-                st.session_state.logged_in = True
-                st.success("Passwort gesetzt! Willkommen beim Geld-Tracker.")
-                st.rerun()
-            elif DataService.get_password() == password:
+                if DataService.set_password(password):
+                    st.session_state.logged_in = True
+                    st.success("Passwort gesetzt! Willkommen beim Geld-Tracker.")
+                    st.rerun()
+                else:
+                    st.error("Fehler beim Passwort setzen!")
+            elif DataService.verify_password(password):
                 # Korrektes Passwort
                 st.session_state.logged_in = True
                 st.success("Login erfolgreich!")
                 st.rerun()
             else:
                 st.error("Falsches Passwort!")
-
+        
+        
 # Hauptseite
 def home_page():
     st.title("🏦 Geld-Tracker")
