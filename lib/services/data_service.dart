@@ -66,4 +66,15 @@ class DataService {
     final password = await getPassword();
     return password != null && password.isNotEmpty;
   }
+
+  static Future<void> resetPassword() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_passwordKey);
+  }
+
+  static Future<void> resetAllData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_expensesKey);
+    await prefs.remove(_passwordKey);
+  }
 }
