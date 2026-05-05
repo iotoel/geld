@@ -639,16 +639,26 @@ def home_page():
             col1, col2 = st.columns(2)
             with col1:
                 date = st.date_input("Datum", datetime.date.today())
-                price = st.number_input("Preis (CHF)", min_value=0.0, step=0.05, format="%.2f")
+                transaction_type = st.selectbox("Typ", ["Ausgabe", "Einnahme"])
+                if transaction_type == "Ausgabe":
+                    price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", help="Positive Zahl für Ausgaben")
+                else:
+                    price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", help="Positive Zahl für Einnahmen")
             with col2:
                 description = st.text_input("Beschreibung")
             
-            submitted = st.form_submit_button("Ausgabe hinzufügen", use_container_width=True)
+            submitted = st.form_submit_button("Hinzufügen", use_container_width=True)
             if submitted and description:
-                rounded_price = round_price(price)
+                # Ausgaben als negative Zahlen speichern
+                if transaction_type == "Ausgabe":
+                    rounded_price = -round_price(price)
+                    st.success(f"Ausgabe von {rounded_price:.2f} CHF hinzugefügt!")
+                else:
+                    rounded_price = round_price(price)
+                    st.success(f"Einnahme von {rounded_price:.2f} CHF hinzugefügt!")
+                
                 new_expense = Expense(0, date, rounded_price, description)
                 DataService.add_expense(new_expense)
-                st.success(f"Ausgabe von {rounded_price:.2f} CHF hinzugefügt!")
                 expenses = DataService.get_expenses()
                 st.rerun()
     
@@ -744,17 +754,35 @@ def edit_expense_page():
         col1, col2 = st.columns(2)
         with col1:
             date = st.date_input("Datum", expense.date)
-            price = st.number_input("Preis (CHF)", min_value=0.0, step=0.05, format="%.2f", value=expense.price)
+            # Bestimme Typ basierend auf Vorzeichen des Preises
+            if expense.price >= 0:
+                edit_type = "Einnahme"
+                edit_price = expense.price
+            else:
+                edit_type = "Ausgabe"
+                edit_price = abs(expense.price)
+            
+            transaction_type = st.selectbox("Typ", ["Ausgabe", "Einnahme"], index=0 if edit_type == "Ausgabe" else 1)
+            if transaction_type == "Ausgabe":
+                price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", value=edit_price, help="Positive Zahl für Ausgaben")
+            else:
+                price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", value=edit_price, help="Positive Zahl für Einnahmen")
         with col2:
             description = st.text_input("Beschreibung", expense.description)
         
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.form_submit_button("Speichern", use_container_width=True):
-                rounded_price = round_price(price)
+                # Ausgaben als negative Zahlen speichern
+                if transaction_type == "Ausgabe":
+                    rounded_price = -round_price(price)
+                    st.success(f"Ausgabe von {rounded_price:.2f} CHF aktualisiert!")
+                else:
+                    rounded_price = round_price(price)
+                    st.success(f"Einnahme von {rounded_price:.2f} CHF aktualisiert!")
+                
                 updated_expense = Expense(expense.id, date, rounded_price, description)
                 DataService.update_expense(updated_expense)
-                st.success("Ausgabe aktualisiert!")
                 del st.session_state.edit_expense_id
                 st.rerun()
         with col2:
