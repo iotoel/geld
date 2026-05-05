@@ -4,7 +4,84 @@ import datetime
 import os
 from typing import List, Dict, Any
 import pandas as pd
-from config import DEFAULT_PASSWORD
+
+# Email-Konfiguration
+class EmailService:
+    def __init__(self):
+        config = DataService.get_email_config()
+        self.smtp_server = config.get("smtp_server", "smtp.gmail.com")
+        self.smtp_port = config.get("smtp_port", 587)
+        self.sender_email = config.get("sender_email", "")
+        self.sender_password = config.get("sender_password", "")
+        self.admin_email = config.get("admin_email", "")
+    
+    def is_configured(self) -> bool:
+        """Prüft ob Email-Service konfiguriert ist"""
+        return all([self.sender_email, self.sender_password, self.admin_email])
+    
+    def generate_password(self, length: int = 12) -> str:
+        """Generiert ein sicheres Zufallspasswort"""
+        import secrets
+        import string
+        characters = string.ascii_letters + string.digits + "!@#$%^&*"
+        password = ''.join(secrets.choice(characters) for _ in range(length))
+        return password
+    
+    def send_password_reset_email(self, new_password: str) -> bool:
+        """Sendet Email mit neuem Passwort"""
+        if not self.is_configured():
+            return False
+            
+        try:
+            import smtplib
+            import ssl
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            message = MIMEMultipart("alternative")
+            message["Subject"] = "🔐 Geld-Tracker - Passwort zurückgesetzt"
+            message["From"] = self.sender_email
+            message["To"] = self.admin_email
+            
+            # HTML Email
+            html = f"""
+            <html>
+              <body>
+                <h2>🏦 Geld-Tracker Passwort-Reset</h2>
+                <p>Ihr Passwort wurde erfolgreich zurückgesetzt.</p>
+                <div style="background-color: #f0f0f0; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                  <h3>🔑 Neues Passwort:</h3>
+                  <p style="font-family: monospace; font-size: 18px; color: #d63384;"><strong>{new_password}</strong></p>
+                </div>
+                <p><strong>Wichtige Hinweise:</strong></p>
+                <ul>
+                  <li>Bitte bewahren Sie dieses Passwort sicher auf</li>
+                  <li>Ändern Sie es nach dem Login wenn gewünscht</li>
+                  <li>Teilen Sie dieses Passwort mit niemandem</li>
+                </ul>
+                <hr>
+                <p><small>Diese Email wurde automatisch generiert. Wenn Sie dies nicht angefordert haben, ignorieren Sie diese Nachricht.</small></p>
+              </body>
+            </html>
+            """
+            
+            message.attach(MIMEText(html, "html"))
+            
+            # SSL-Kontext erstellen
+            context = ssl.create_default_context()
+            
+            # Email senden
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls(context=context)
+                server.login(self.sender_email, self.sender_password)
+                server.sendmail(self.sender_email, self.admin_email, message.as_string())
+            
+            return True
+            
+        except Exception as e:
+            print(f"Fehler beim Senden der Email: {e}")
+            return False
+
 
 # Datenmodell für Ausgaben
 class Expense:
@@ -125,6 +202,51 @@ class DataService:
     def verify_password(password: str) -> bool:
         """Verifiziert das Passwort"""
         return DataService.get_password() == password
+    
+    @staticmethod
+    def reset_password(new_password: str):
+        """Setzt ein neues Passwort (überschreibt das bestehende)"""
+        data = DataService.load_data()
+        data["password"] = new_password
+        DataService.save_data(data)
+    
+    @staticmethod
+    def change_password(old_password: str, new_password: str) -> bool:
+        """Ändert das Passwort nur wenn das alte korrekt ist"""
+        if DataService.verify_password(old_password):
+            DataService.reset_password(new_password)
+            return True
+        return False
+    
+    @staticmethod
+    def is_configured() -> bool:
+        """Prüft ob die App bereits konfiguriert ist"""
+        data = DataService.load_data()
+        return data.get("configured", False)
+    
+    @staticmethod
+    def save_email_config(smtp_server: str, smtp_port: int, sender_email: str, sender_password: str, admin_email: str):
+        """Speichert Email-Konfiguration (nur einmal möglich)"""
+        if DataService.is_configured():
+            return False
+        
+        data = DataService.load_data()
+        data["email_config"] = {
+            "smtp_server": smtp_server,
+            "smtp_port": smtp_port,
+            "sender_email": sender_email,
+            "sender_password": sender_password,
+            "admin_email": admin_email
+        }
+        data["configured"] = True
+        DataService.save_data(data)
+        return True
+    
+    @staticmethod
+    def get_email_config() -> Dict[str, Any]:
+        """Holt die Email-Konfiguration"""
+        data = DataService.load_data()
+        return data.get("email_config", {})
 
 # Hilfsfunktionen
 def format_month(month_key: str) -> str:
@@ -157,21 +279,80 @@ def round_price(price: float) -> float:
     """Rundet Preis auf 0.05 CHF"""
     return round(price * 20) / 20
 
+# Setup-Seite für Erstkonfiguration
+def setup_page():
+    st.title("🔧 Geld-Tracker - Erstkonfiguration")
+    st.markdown("---")
+    
+    st.info("🚀 Willkommen! Bitte konfigurieren Sie Ihren Geld-Tracker einmalig.")
+    
+    with st.form("setup_form"):
+        st.subheader("📧 Email-Konfiguration")
+        st.caption("Diese Einstellungen werden sicher auf dem Server gespeichert und können später nicht mehr geändert werden.")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            smtp_server = st.text_input("SMTP Server", value="smtp.gmail.com", help="z.B. smtp.gmail.com")
+            smtp_port = st.number_input("SMTP Port", value=587, help="Normalerweise 587 für TLS")
+            sender_email = st.text_input("Sender Email", help="Ihre Gmail-Adresse")
+        
+        with col2:
+            sender_password = st.text_input("App-Passwort", type="password", help="Gmail App-Passwort (16-stellig)")
+            admin_email = st.text_input("Admin Email", help="Email für Passwort-Reset")
+        
+        st.subheader("� Passwort festlegen")
+        app_password = st.text_input("App-Passwort", type="password", help="Passwort für den Geld-Tracker Login")
+        confirm_password = st.text_input("Passwort bestätigen", type="password")
+        
+        st.markdown("---")
+        
+        # Gmail App-Passwort Hilfe
+        with st.expander("📖 Wie bekomme ich ein Gmail App-Passwort?"):
+            st.markdown("""
+            1. **2-Faktor-Authentifizierung aktivieren** in Google Account
+            2. **App-Passwort erstellen**: https://myaccount.google.com/apppasswords
+            3. **App auswählen**: "Andere (benutzerdefinierter Name)"
+            4. **Name eingeben**: "Geld-Tracker"
+            5. **Generieren** und 16-stelliges Code kopieren
+            6. **Code hier einfügen** (ohne Leerzeichen)
+            """)
+        
+        submitted = st.form_submit_button("🚀 Konfiguration speichern", use_container_width=True)
+        
+        if submitted:
+            # Validierung
+            if not all([smtp_server, sender_email, sender_password, admin_email, app_password, confirm_password]):
+                st.error("❌ Bitte alle Felder ausfüllen")
+            elif app_password != confirm_password:
+                st.error("❌ Passwörter stimmen nicht überein")
+            elif len(app_password) < 6:
+                st.error("❌ Passwort muss mindestens 6 Zeichen lang sein")
+            elif "@" not in sender_email or "@" not in admin_email:
+                st.error("❌ Ungültige Email-Adresse")
+            else:
+                # Konfiguration speichern
+                if DataService.save_email_config(smtp_server, int(smtp_port), sender_email, sender_password, admin_email):
+                    DataService.set_password(app_password)
+                    st.success("✅ Konfiguration erfolgreich gespeichert!")
+                    st.balloons()
+                    st.info("🎉 Ihr Geld-Tracker ist jetzt bereit!")
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Speichern der Konfiguration")
+
 # Login-Seite
 def login_page():
     st.title("🏦 Geld-Tracker")
     
+    # Prüfen ob Setup benötigt wird
+    if not DataService.is_configured():
+        setup_page()
+        return
+    
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("---")
-        
-        # Prüfen ob Passwort bereits gesetzt ist
-        is_password_set = DataService.is_password_set()
-        
-        if not is_password_set:
-            st.info("🔑 Erster Start - Passwort wird initialisiert")
-            st.info(f"Standard-Passwort: **{DEFAULT_PASSWORD}**")
-            st.info("Sie können dieses Passwort beim ersten Login verwenden oder ein eigenes festlegen.")
         
         password = st.text_input("Passwort", type="password", key="login_password")
         
@@ -180,31 +361,93 @@ def login_page():
                 st.error("Passwort darf nicht leer sein")
                 return
             
-            if not is_password_set:
-                # Erster Start - Passwort setzen
-                if DataService.set_password(password):
-                    st.session_state.logged_in = True
-                    st.success("Passwort gesetzt! Willkommen beim Geld-Tracker.")
-                    st.rerun()
-                else:
-                    st.error("Fehler beim Passwort setzen!")
-            elif DataService.verify_password(password):
-                # Korrektes Passwort
+            if DataService.verify_password(password):
                 st.session_state.logged_in = True
                 st.success("Login erfolgreich!")
                 st.rerun()
             else:
                 st.error("Falsches Passwort!")
         
+        # Admin-Board Link
+        st.markdown("---")
+        st.markdown("🔐 [Admin-Board für Passwort-Verwaltung](?admin=1)")
         
+        
+# Admin-Board
+def admin_board():
+    st.title("🔐 Admin-Board")
+    st.markdown("---")
+    st.caption("Passwort-Verwaltung für den Geld-Tracker")
+    
+    email_service = EmailService()
+    
+    tab1, tab2 = st.tabs(["🔄 Passwort ändern", "🔑 Passwort vergessen"])
+    
+    with tab1:
+        st.subheader("Passwort ändern (wenn Sie es kennen)")
+        
+        with st.form("change_password_form"):
+            old_password = st.text_input("Altes Passwort", type="password")
+            new_password = st.text_input("Neues Passwort", type="password")
+            confirm_password = st.text_input("Passwort bestätigen", type="password")
+            
+            submitted = st.form_submit_button("🔄 Passwort ändern", use_container_width=True)
+            
+            if submitted:
+                if not old_password or not new_password or not confirm_password:
+                    st.error("Bitte alle Felder ausfüllen")
+                elif new_password != confirm_password:
+                    st.error("Neue Passwörter stimmen nicht überein")
+                elif len(new_password) < 6:
+                    st.error("Passwort muss mindestens 6 Zeichen lang sein")
+                else:
+                    if DataService.change_password(old_password, new_password):
+                        st.success("✅ Passwort erfolgreich geändert!")
+                        st.balloons()
+                    else:
+                        st.error("❌ Altes Passwort ist falsch")
+    
+    with tab2:
+        st.subheader("Passwort vergessen (neues Passwort anfordern)")
+        
+        if email_service.is_configured():
+            st.info(f"📧 Neues Passwort wird an: **{email_service.admin_email}**")
+            st.success("✅ Email-Service konfiguriert")
+            
+            if st.button("📧 Neues Passwort per Email senden", use_container_width=True):
+                with st.spinner("Generiere neues Passwort und sende Email..."):
+                    new_password = email_service.generate_password()
+                    DataService.reset_password(new_password)
+                    
+                    if email_service.send_password_reset_email(new_password):
+                        st.success("✅ Email wurde erfolgreich gesendet!")
+                        st.info("📧 Bitte überprüfen Sie Ihr Email-Postfach.")
+                    else:
+                        st.error("❌ Fehler beim Senden der Email!")
+                        st.warning(f"⚠️ Passwort wurde zurückgesetzt auf: **{new_password}**")
+        else:
+            st.error("❌ Email-Service nicht konfiguriert")
+            st.warning("⚠️ Die Erstkonfiguration wurde nicht abgeschlossen.")
+            st.info("Bitte starten Sie die App neu und schliessen Sie die Erstkonfiguration ab.")
+        
+        st.markdown("---")
+        st.caption("💡 Die Email-Konfiguration wurde während der Erstkonfiguration festgelegt und ist nicht mehr änderbar.")
+    
+    
 # Hauptseite
 def home_page():
     st.title("🏦 Geld-Tracker")
     
-    # Logout Button
-    if st.button("Logout", key="logout_btn"):
-        st.session_state.logged_in = False
-        st.rerun()
+    # Navigation
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("Logout", key="logout_btn"):
+            st.session_state.logged_in = False
+            st.rerun()
+    with col2:
+        if st.button("🔐 Admin-Board", key="admin_btn"):
+            st.session_state.show_admin = True
+            st.rerun()
     
     expenses = DataService.get_expenses()
     
@@ -342,15 +585,26 @@ def main():
     # Session State initialisieren
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
+    if 'show_admin' not in st.session_state:
+        st.session_state.show_admin = False
+    
+    # Admin-Board über URL-Parameter erreichbar
+    if 'admin' in st.query_params:
+        st.session_state.show_admin = True
     
     # Seiten basierend auf Login-Status
-    if not st.session_state.logged_in:
+    if st.session_state.get('show_admin', False):
+        admin_board()
+        if st.button("🏠 Zurück zum Login"):
+            st.session_state.show_admin = False
+            st.query_params.clear()
+            st.rerun()
+    elif not st.session_state.logged_in:
         login_page()
+    elif 'edit_expense_id' in st.session_state:
+        edit_expense_page()
     else:
-        if 'edit_expense_id' in st.session_state:
-            edit_expense_page()
-        else:
-            home_page()
+        home_page()
 
 if __name__ == "__main__":
     main()
