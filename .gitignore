@@ -11,10 +11,12 @@ venv/
 
 # Streamlit data files (sensitive)
 geld_data.json
-*.json
 
 # Streamlit secrets (sensitive)
 .streamlit/secrets.toml
 
 # Backup files
 backup_*.json
+
+# Import data files
+import_data.json
