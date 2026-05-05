@@ -247,6 +247,91 @@ class DataService:
         """Holt die Email-Konfiguration"""
         data = DataService.load_data()
         return data.get("email_config", {})
+    
+    @staticmethod
+    def import_json_data(json_content: str) -> bool:
+        """Importiert JSON-Daten und ersetzt vorhandene Daten"""
+        try:
+            # JSON parsen
+            imported_data = json.loads(json_content)
+            
+            # Backup der aktuellen Daten erstellen
+            current_data = DataService.load_data()
+            backup_data = {
+                "backup_timestamp": datetime.datetime.now().isoformat(),
+                "backup_data": current_data
+            }
+            
+            # Importierte Daten validieren
+            if not DataService.validate_json_data(imported_data):
+                return False
+            
+            # Backup speichern
+            backup_filename = f"backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            backup_path = os.path.join(os.path.dirname(DataService.DATA_FILE), backup_filename)
+            with open(backup_path, 'w', encoding='utf-8') as f:
+                json.dump(backup_data, f, indent=2, ensure_ascii=False)
+            
+            # Importierte Daten speichern (wichtig: Email-Konfiguration und Passwort behalten)
+            merged_data = imported_data.copy()
+            
+            # Wichtige Konfigurationen aus aktuellen Daten übernehmen
+            if "email_config" in current_data:
+                merged_data["email_config"] = current_data["email_config"]
+            if "configured" in current_data:
+                merged_data["configured"] = current_data["configured"]
+            if "password" in current_data and current_data.get("password"):
+                merged_data["password"] = current_data["password"]
+            
+            DataService.save_data(merged_data)
+            return True
+            
+        except Exception as e:
+            print(f"Fehler beim Import: {e}")
+            return False
+    
+    @staticmethod
+    def validate_json_data(data: Dict[str, Any]) -> bool:
+        """Validiert die importierten JSON-Daten"""
+        try:
+            # Grundstruktur prüfen
+            if not isinstance(data, dict):
+                return False
+            
+            # Expenses prüfen
+            if "expenses" in data:
+                expenses = data["expenses"]
+                if not isinstance(expenses, list):
+                    return False
+                
+                for expense in expenses:
+                    if not isinstance(expense, dict):
+                        return False
+                    
+                    # Benötigte Felder prüfen
+                    required_fields = ["id", "date", "price", "desc"]
+                    for field in required_fields:
+                        if field not in expense:
+                            return False
+                    
+                    # Datentypen prüfen
+                    if not isinstance(expense["id"], int):
+                        return False
+                    if not isinstance(expense["price"], (int, float)):
+                        return False
+                    if not isinstance(expense["desc"], str):
+                        return False
+                    
+                    # Datum prüfen
+                    try:
+                        datetime.datetime.fromisoformat(expense["date"].replace('Z', '+00:00'))
+                    except:
+                        return False
+            
+            return True
+            
+        except Exception:
+            return False
 
 # Hilfsfunktionen
 def format_month(month_key: str) -> str:
@@ -381,7 +466,7 @@ def admin_board():
     
     email_service = EmailService()
     
-    tab1, tab2 = st.tabs(["🔄 Passwort ändern", "🔑 Passwort vergessen"])
+    tab1, tab2, tab3 = st.tabs(["🔄 Passwort ändern", "🔑 Passwort vergessen", "📁 Daten importieren"])
     
     with tab1:
         st.subheader("Passwort ändern (wenn Sie es kennen)")
@@ -432,6 +517,103 @@ def admin_board():
         
         st.markdown("---")
         st.caption("💡 Die Email-Konfiguration wurde während der Erstkonfiguration festgelegt und ist nicht mehr änderbar.")
+    
+    with tab3:
+        st.subheader("Daten importieren (JSON-Datei)")
+        st.warning("⚠️ **Achtung:** Dieser Vorgang ersetzt alle aktuellen Ausgaben-Daten!")
+        
+        # Aktuelle Daten anzeigen
+        current_expenses = DataService.get_expenses()
+        st.info(f"📊 Aktuelle Daten: **{len(current_expenses)}** Ausgaben-Einträge")
+        
+        # File Upload
+        uploaded_file = st.file_uploader(
+            "📁 JSON-Datei auswählen", 
+            type=['json'],
+            help="JSON-Datei mit Ausgaben-Daten im gleichen Format"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                # Inhalt lesen
+                json_content = uploaded_file.read().decode('utf-8')
+                
+                # Vorschau
+                st.subheader("📋 Vorschau der importierten Daten")
+                with st.expander("JSON-Inhalt anzeigen"):
+                    st.json(json_content)
+                
+                # Validierung
+                imported_data = json.loads(json_content)
+                if DataService.validate_json_data(imported_data):
+                    st.success("✅ JSON-Format ist gültig")
+                    
+                    imported_expenses = imported_data.get("expenses", [])
+                    st.info(f"📊 Importierte Daten: **{len(imported_expenses)}** Ausgaben-Einträge")
+                    
+                    # Import-Button
+                    if st.button("🚀 Daten importieren", type="primary", use_container_width=True):
+                        with st.spinner("Importiere Daten..."):
+                            if DataService.import_json_data(json_content):
+                                st.success("✅ Daten erfolgreich importiert!")
+                                st.balloons()
+                                st.info("🔄 Die Seite wird neu geladen...")
+                                st.rerun()
+                            else:
+                                st.error("❌ Fehler beim Import der Daten!")
+                else:
+                    st.error("❌ JSON-Format ist ungültig!")
+                    st.warning("⚠️ Bitte überprüfen Sie das JSON-Format. Benötigte Struktur:")
+                    st.code("""
+{
+  "expenses": [
+    {
+      "id": 1,
+      "date": "2024-01-15",
+      "price": 12.50,
+      "desc": "Mittagessen"
+    }
+  ]
+}
+                    """)
+            
+            except Exception as e:
+                st.error(f"❌ Fehler beim Lesen der Datei: {e}")
+        
+        st.markdown("---")
+        st.subheader("📖 Format-Anleitung")
+        
+        with st.expander("📋 JSON-Format Beispiel"):
+            st.code("""
+{
+  "expenses": [
+    {
+      "id": 1,
+      "date": "2024-01-15",
+      "price": 12.50,
+      "desc": "Mittagessen"
+    },
+    {
+      "id": 2,
+      "date": "2024-01-16",
+      "price": 45.00,
+      "desc": "Tanken"
+    }
+  ]
+}
+            """)
+        
+        st.markdown("**Erforderliche Felder:**")
+        st.markdown("- `id`: Eindeutige Nummer (Integer)")
+        st.markdown("- `date`: Datum (YYYY-MM-DD)")
+        st.markdown("- `price`: Preis (Zahl)")
+        st.markdown("- `desc`: Beschreibung (Text)")
+        
+        st.markdown("**Wichtige Hinweise:**")
+        st.markdown("- 🔄 **Backup:** Vor dem Import wird automatisch ein Backup erstellt")
+        st.markdown("- 🔐 **Konfiguration:** Passwort und Email-Einstellungen bleiben erhalten")
+        st.markdown("- 📊 **Daten:** Nur Ausgaben-Daten werden ersetzt")
+        st.markdown("- 🗂️ **Backups:** Backups werden als `backup_YYYYMMDD_HHMMSS.json` gespeichert")
     
     
 # Hauptseite

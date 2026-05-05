@@ -15,3 +15,6 @@ geld_data.json
 
 # Streamlit secrets (sensitive)
 .streamlit/secrets.toml
+
+# Backup files
+backup_*.json
