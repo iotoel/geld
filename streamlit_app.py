@@ -431,14 +431,14 @@ def admin_board():
             if st.button("📧 Neues Passwort per Email senden", use_container_width=True):
                 with st.spinner("Generiere neues Passwort und sende Email..."):
                     new_password = email_service.generate_password()
-                    DataService.reset_password(new_password)
                     
                     if email_service.send_password_reset_email(new_password):
+                        DataService.reset_password(new_password)
                         st.success("✅ Email wurde erfolgreich gesendet!")
                         st.info("📧 Bitte überprüfen Sie Ihr Email-Postfach.")
                     else:
                         st.error("❌ Fehler beim Senden der Email!")
-                        st.warning(f"⚠️ Passwort wurde zurückgesetzt auf: **{new_password}**")
+                        st.warning("⚠️ Passwort wurde nicht geändert. Bitte prüfen Sie die Email-Konfiguration und das SENDER_PASSWORD Secret.")
         else:
             st.error("❌ Email-Service nicht konfiguriert")
             st.warning("⚠️ Bitte legen Sie die erforderlichen Secrets in Streamlit Cloud an: SMTP_SERVER, SMTP_PORT, SENDER_EMAIL, SENDER_PASSWORD, ADMIN_EMAIL")
