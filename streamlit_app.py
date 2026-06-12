@@ -21,8 +21,6 @@ if not st.session_state.authenticated:
 
     st.stop()
 
-st.title("Geschützter Bereich")
-
 import json
 import datetime
 import os
@@ -32,12 +30,11 @@ import pandas as pd
 # Email-Konfiguration
 class EmailService:
     def __init__(self):
-        config = DataService.get_email_config()
-        self.smtp_server = config.get("smtp_server", "smtp.gmail.com")
-        self.smtp_port = config.get("smtp_port", 587)
-        self.sender_email = config.get("sender_email", "")
-        self.sender_password = config.get("sender_password", "")
-        self.admin_email = config.get("admin_email", "")
+        self.smtp_server = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
+        self.smtp_port = int(st.secrets.get("SMTP_PORT", 587))
+        self.sender_email = st.secrets.get("SENDER_EMAIL", "")
+        self.sender_password = st.secrets.get("SENDER_PASSWORD", "")
+        self.admin_email = st.secrets.get("ADMIN_EMAIL", "")
     
     def is_configured(self) -> bool:
         """Prüft ob Email-Service konfiguriert ist"""
@@ -149,7 +146,7 @@ class DataService:
                     return json.load(f)
             except (json.JSONDecodeError, IOError):
                 pass
-        return {"password": None, "expenses": []}
+        return {"expenses": []}
     
     @staticmethod
     def save_data(data: Dict[str, Any]):
@@ -201,39 +198,44 @@ class DataService:
         DataService.save_expenses(expenses)
     
     @staticmethod
-    def get_password() -> str:
-        """Lädt Passwort aus der Datei"""
+    def get_password_hash() -> str:
+        """Lädt lokalen Passwort-Hash aus der Datei"""
         data = DataService.load_data()
-        return data.get("password", "")
-    
+        return data.get("password_hash", "")
+
     @staticmethod
-    def set_password(password: str):
-        """Setzt Passwort nur wenn noch keines existiert"""
+    def set_password_hash(password_hash: str):
+        """Speichert einen Passwort-Hash lokal"""
         data = DataService.load_data()
-        if data.get("password") is None:
-            data["password"] = password
-            DataService.save_data(data)
-            return True
-        return False
-    
-    @staticmethod
-    def is_password_set() -> bool:
-        """Prüft ob Passwort bereits gesetzt ist"""
-        data = DataService.load_data()
-        return data.get("password") is not None and data.get("password") != ""
-    
+        data["password_hash"] = password_hash
+        DataService.save_data(data)
+
     @staticmethod
     def verify_password(password: str) -> bool:
-        """Verifiziert das Passwort"""
-        return DataService.get_password() == password
-    
+        """Verifiziert das Passwort gegen Secrets oder lokale Datei"""
+        stored_hash = st.secrets.get("PASSWORD_HASH", "")
+        if stored_hash:
+            try:
+                if bcrypt.checkpw(password.encode(), stored_hash.encode()):
+                    return True
+            except ValueError:
+                pass
+
+        local_hash = DataService.get_password_hash()
+        if local_hash:
+            try:
+                return bcrypt.checkpw(password.encode(), local_hash.encode())
+            except ValueError:
+                pass
+
+        return False
+
     @staticmethod
     def reset_password(new_password: str):
-        """Setzt ein neues Passwort (überschreibt das bestehende)"""
-        data = DataService.load_data()
-        data["password"] = new_password
-        DataService.save_data(data)
-    
+        """Speichert ein neues Passwort lokal"""
+        hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        DataService.set_password_hash(hashed)
+
     @staticmethod
     def change_password(old_password: str, new_password: str) -> bool:
         """Ändert das Passwort nur wenn das alte korrekt ist"""
@@ -241,36 +243,6 @@ class DataService:
             DataService.reset_password(new_password)
             return True
         return False
-    
-    @staticmethod
-    def is_configured() -> bool:
-        """Prüft ob die App bereits konfiguriert ist"""
-        data = DataService.load_data()
-        return data.get("configured", False)
-    
-    @staticmethod
-    def save_email_config(smtp_server: str, smtp_port: int, sender_email: str, sender_password: str, admin_email: str):
-        """Speichert Email-Konfiguration (nur einmal möglich)"""
-        if DataService.is_configured():
-            return False
-        
-        data = DataService.load_data()
-        data["email_config"] = {
-            "smtp_server": smtp_server,
-            "smtp_port": smtp_port,
-            "sender_email": sender_email,
-            "sender_password": sender_password,
-            "admin_email": admin_email
-        }
-        data["configured"] = True
-        DataService.save_data(data)
-        return True
-    
-    @staticmethod
-    def get_email_config() -> Dict[str, Any]:
-        """Holt die Email-Konfiguration"""
-        data = DataService.load_data()
-        return data.get("email_config", {})
     
     @staticmethod
     def import_json_data(json_content: str) -> bool:
@@ -296,17 +268,12 @@ class DataService:
             with open(backup_path, 'w', encoding='utf-8') as f:
                 json.dump(backup_data, f, indent=2, ensure_ascii=False)
             
-            # Importierte Daten speichern (wichtig: Email-Konfiguration und Passwort behalten)
+            # Importierte Daten speichern (wichtig: lokalen Passwort-Hash behalten)
             merged_data = imported_data.copy()
-            
-            # Wichtige Konfigurationen aus aktuellen Daten übernehmen
-            if "email_config" in current_data:
-                merged_data["email_config"] = current_data["email_config"]
-            if "configured" in current_data:
-                merged_data["configured"] = current_data["configured"]
-            if "password" in current_data and current_data.get("password"):
-                merged_data["password"] = current_data["password"]
-            
+
+            if "password_hash" in current_data:
+                merged_data["password_hash"] = current_data["password_hash"]
+
             DataService.save_data(merged_data)
             return True
             
@@ -388,76 +355,11 @@ def round_price(price: float) -> float:
     """Rundet Preis auf 0.05 CHF"""
     return round(price * 20) / 20
 
-# Setup-Seite für Erstkonfiguration
-def setup_page():
-    st.title("🔧 Geld-Tracker - Erstkonfiguration")
-    st.markdown("---")
-    
-    st.info("🚀 Willkommen! Bitte konfigurieren Sie Ihren Geld-Tracker einmalig.")
-    
-    with st.form("setup_form"):
-        st.subheader("📧 Email-Konfiguration")
-        st.caption("Diese Einstellungen werden sicher auf dem Server gespeichert und können später nicht mehr geändert werden.")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            smtp_server = st.text_input("SMTP Server", value="smtp.gmail.com", help="z.B. smtp.gmail.com")
-            smtp_port = st.number_input("SMTP Port", value=587, help="Normalerweise 587 für TLS")
-            sender_email = st.text_input("Sender Email", help="Ihre Gmail-Adresse")
-        
-        with col2:
-            sender_password = st.text_input("App-Passwort", type="password", help="Gmail App-Passwort (16-stellig)")
-            admin_email = st.text_input("Admin Email", help="Email für Passwort-Reset")
-        
-        st.subheader("🔑 Passwort festlegen")
-        app_password = st.text_input("App-Passwort", type="password", help="Passwort für den Geld-Tracker Login")
-        confirm_password = st.text_input("Passwort bestätigen", type="password")
-        
-        st.markdown("---")
-        
-        # Gmail App-Passwort Hilfe
-        with st.expander("📖 Wie bekomme ich ein Gmail App-Passwort?"):
-            st.markdown("""
-            1. **2-Faktor-Authentifizierung aktivieren** in Google Account
-            2. **App-Passwort erstellen**: https://myaccount.google.com/apppasswords
-            3. **App auswählen**: "Andere (benutzerdefinierter Name)"
-            4. **Name eingeben**: "Geld-Tracker"
-            5. **Generieren** und 16-stelliges Code kopieren
-            6. **Code hier einfügen** (ohne Leerzeichen)
-            """)
-        
-        submitted = st.form_submit_button("🚀 Konfiguration speichern", use_container_width=True)
-        
-        if submitted:
-            # Validierung
-            if not all([smtp_server, sender_email, sender_password, admin_email, app_password, confirm_password]):
-                st.error("❌ Bitte alle Felder ausfüllen")
-            elif app_password != confirm_password:
-                st.error("❌ Passwörter stimmen nicht überein")
-            elif len(app_password) < 6:
-                st.error("❌ Passwort muss mindestens 6 Zeichen lang sein")
-            elif "@" not in sender_email or "@" not in admin_email:
-                st.error("❌ Ungültige Email-Adresse")
-            else:
-                # Konfiguration speichern
-                if DataService.save_email_config(smtp_server, int(smtp_port), sender_email, sender_password, admin_email):
-                    DataService.set_password(app_password)
-                    st.success("✅ Konfiguration erfolgreich gespeichert!")
-                    st.balloons()
-                    st.info("🎉 Ihr Geld-Tracker ist jetzt bereit!")
-                    st.rerun()
-                else:
-                    st.error("❌ Fehler beim Speichern der Konfiguration")
+# Keine Setup-Seite mehr: Konfiguration über Streamlit Cloud Secrets
 
 # Login-Seite
 def login_page():
     st.title("🏦 Geld-Tracker")
-    
-    # Prüfen ob Setup benötigt wird
-    if not DataService.is_configured():
-        setup_page()
-        return
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -476,6 +378,9 @@ def login_page():
                 st.rerun()
             else:
                 st.error("Falsches Passwort!")
+
+        if not st.secrets.get("PASSWORD_HASH") and not DataService.get_password_hash():
+            st.warning("🚨 Kein Login-Passwort gefunden. Bitte legen Sie das Secret PASSWORD_HASH in Streamlit Cloud an.")
         
         # Admin-Board Link
         st.markdown("---")
@@ -536,11 +441,10 @@ def admin_board():
                         st.warning(f"⚠️ Passwort wurde zurückgesetzt auf: **{new_password}**")
         else:
             st.error("❌ Email-Service nicht konfiguriert")
-            st.warning("⚠️ Die Erstkonfiguration wurde nicht abgeschlossen.")
-            st.info("Bitte starten Sie die App neu und schliessen Sie die Erstkonfiguration ab.")
+            st.warning("⚠️ Bitte legen Sie die erforderlichen Secrets in Streamlit Cloud an: SMTP_SERVER, SMTP_PORT, SENDER_EMAIL, SENDER_PASSWORD, ADMIN_EMAIL")
         
         st.markdown("---")
-        st.caption("💡 Die Email-Konfiguration wurde während der Erstkonfiguration festgelegt und ist nicht mehr änderbar.")
+        st.caption("💡 Die Email-Konfiguration wird über Streamlit Cloud Secrets verwaltet.")
     
 # Hauptseite
 def home_page():
