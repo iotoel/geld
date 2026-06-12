@@ -1,4 +1,28 @@
 import streamlit as st
+import bcrypt
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    password = st.text_input("Passwort", type="password")
+
+    if st.button("Anmelden"):
+        stored_hash = st.secrets["PASSWORD_HASH"]
+
+        if bcrypt.checkpw(
+            password.encode(),
+            stored_hash.encode()
+        ):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Falsches Passwort")
+
+    st.stop()
+
+st.title("Geschützter Bereich")
+
 import json
 import datetime
 import os
@@ -386,7 +410,7 @@ def setup_page():
             sender_password = st.text_input("App-Passwort", type="password", help="Gmail App-Passwort (16-stellig)")
             admin_email = st.text_input("Admin Email", help="Email für Passwort-Reset")
         
-        st.subheader("� Passwort festlegen")
+        st.subheader("🔑 Passwort festlegen")
         app_password = st.text_input("App-Passwort", type="password", help="Passwort für den Geld-Tracker Login")
         confirm_password = st.text_input("Passwort bestätigen", type="password")
         
@@ -466,7 +490,7 @@ def admin_board():
     
     email_service = EmailService()
     
-    tab1, tab2, tab3 = st.tabs(["🔄 Passwort ändern", "🔑 Passwort vergessen", "📁 Daten importieren"])
+    tab1, tab2 = st.tabs(["🔄 Passwort ändern", "🔑 Passwort vergessen"])
     
     with tab1:
         st.subheader("Passwort ändern (wenn Sie es kennen)")
@@ -518,104 +542,6 @@ def admin_board():
         st.markdown("---")
         st.caption("💡 Die Email-Konfiguration wurde während der Erstkonfiguration festgelegt und ist nicht mehr änderbar.")
     
-    with tab3:
-        st.subheader("Daten importieren (JSON-Datei)")
-        st.warning("⚠️ **Achtung:** Dieser Vorgang ersetzt alle aktuellen Ausgaben-Daten!")
-        
-        # Aktuelle Daten anzeigen
-        current_expenses = DataService.get_expenses()
-        st.info(f"📊 Aktuelle Daten: **{len(current_expenses)}** Ausgaben-Einträge")
-        
-        # File Upload
-        uploaded_file = st.file_uploader(
-            "📁 JSON-Datei auswählen", 
-            type=['json'],
-            help="JSON-Datei mit Ausgaben-Daten im gleichen Format"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                # Inhalt lesen
-                json_content = uploaded_file.read().decode('utf-8')
-                
-                # Vorschau
-                st.subheader("📋 Vorschau der importierten Daten")
-                with st.expander("JSON-Inhalt anzeigen"):
-                    st.json(json_content)
-                
-                # Validierung
-                imported_data = json.loads(json_content)
-                if DataService.validate_json_data(imported_data):
-                    st.success("✅ JSON-Format ist gültig")
-                    
-                    imported_expenses = imported_data.get("expenses", [])
-                    st.info(f"📊 Importierte Daten: **{len(imported_expenses)}** Ausgaben-Einträge")
-                    
-                    # Import-Button
-                    if st.button("🚀 Daten importieren", type="primary", use_container_width=True):
-                        with st.spinner("Importiere Daten..."):
-                            if DataService.import_json_data(json_content):
-                                st.success("✅ Daten erfolgreich importiert!")
-                                st.balloons()
-                                st.info("🔄 Die Seite wird neu geladen...")
-                                st.rerun()
-                            else:
-                                st.error("❌ Fehler beim Import der Daten!")
-                else:
-                    st.error("❌ JSON-Format ist ungültig!")
-                    st.warning("⚠️ Bitte überprüfen Sie das JSON-Format. Benötigte Struktur:")
-                    st.code("""
-{
-  "expenses": [
-    {
-      "id": 1,
-      "date": "2024-01-15",
-      "price": 12.50,
-      "desc": "Mittagessen"
-    }
-  ]
-}
-                    """)
-            
-            except Exception as e:
-                st.error(f"❌ Fehler beim Lesen der Datei: {e}")
-        
-        st.markdown("---")
-        st.subheader("📖 Format-Anleitung")
-        
-        with st.expander("📋 JSON-Format Beispiel"):
-            st.code("""
-{
-  "expenses": [
-    {
-      "id": 1,
-      "date": "2024-01-15",
-      "price": 12.50,
-      "desc": "Mittagessen"
-    },
-    {
-      "id": 2,
-      "date": "2024-01-16",
-      "price": 45.00,
-      "desc": "Tanken"
-    }
-  ]
-}
-            """)
-        
-        st.markdown("**Erforderliche Felder:**")
-        st.markdown("- `id`: Eindeutige Nummer (Integer)")
-        st.markdown("- `date`: Datum (YYYY-MM-DD)")
-        st.markdown("- `price`: Preis (Zahl)")
-        st.markdown("- `desc`: Beschreibung (Text)")
-        
-        st.markdown("**Wichtige Hinweise:**")
-        st.markdown("- 🔄 **Backup:** Vor dem Import wird automatisch ein Backup erstellt")
-        st.markdown("- 🔐 **Konfiguration:** Passwort und Email-Einstellungen bleiben erhalten")
-        st.markdown("- 📊 **Daten:** Nur Ausgaben-Daten werden ersetzt")
-        st.markdown("- 🗂️ **Backups:** Backups werden als `backup_YYYYMMDD_HHMMSS.json` gespeichert")
-    
-    
 # Hauptseite
 def home_page():
     st.title("🏦 Geld-Tracker")
@@ -639,26 +565,16 @@ def home_page():
             col1, col2 = st.columns(2)
             with col1:
                 date = st.date_input("Datum", datetime.date.today())
-                transaction_type = st.selectbox("Typ", ["Ausgabe", "Einnahme"])
-                if transaction_type == "Ausgabe":
-                    price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", help="Positive Zahl für Ausgaben")
-                else:
-                    price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", help="Positive Zahl für Einnahmen")
+                price = st.number_input("Preis (CHF)", min_value=0.0, step=0.05, format="%.2f")
             with col2:
                 description = st.text_input("Beschreibung")
             
-            submitted = st.form_submit_button("Hinzufügen", use_container_width=True)
+            submitted = st.form_submit_button("Ausgabe hinzufügen", use_container_width=True)
             if submitted and description:
-                # Ausgaben als negative Zahlen speichern
-                if transaction_type == "Ausgabe":
-                    rounded_price = -round_price(price)
-                    st.success(f"Ausgabe von {rounded_price:.2f} CHF hinzugefügt!")
-                else:
-                    rounded_price = round_price(price)
-                    st.success(f"Einnahme von {rounded_price:.2f} CHF hinzugefügt!")
-                
+                rounded_price = round_price(price)
                 new_expense = Expense(0, date, rounded_price, description)
                 DataService.add_expense(new_expense)
+                st.success(f"Ausgabe von {rounded_price:.2f} CHF hinzugefügt!")
                 expenses = DataService.get_expenses()
                 st.rerun()
     
@@ -754,35 +670,17 @@ def edit_expense_page():
         col1, col2 = st.columns(2)
         with col1:
             date = st.date_input("Datum", expense.date)
-            # Bestimme Typ basierend auf Vorzeichen des Preises
-            if expense.price >= 0:
-                edit_type = "Einnahme"
-                edit_price = expense.price
-            else:
-                edit_type = "Ausgabe"
-                edit_price = abs(expense.price)
-            
-            transaction_type = st.selectbox("Typ", ["Ausgabe", "Einnahme"], index=0 if edit_type == "Ausgabe" else 1)
-            if transaction_type == "Ausgabe":
-                price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", value=edit_price, help="Positive Zahl für Ausgaben")
-            else:
-                price = st.number_input("Betrag (CHF)", min_value=0.0, step=0.05, format="%.2f", value=edit_price, help="Positive Zahl für Einnahmen")
+            price = st.number_input("Preis (CHF)", min_value=0.0, step=0.05, format="%.2f", value=expense.price)
         with col2:
             description = st.text_input("Beschreibung", expense.description)
         
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.form_submit_button("Speichern", use_container_width=True):
-                # Ausgaben als negative Zahlen speichern
-                if transaction_type == "Ausgabe":
-                    rounded_price = -round_price(price)
-                    st.success(f"Ausgabe von {rounded_price:.2f} CHF aktualisiert!")
-                else:
-                    rounded_price = round_price(price)
-                    st.success(f"Einnahme von {rounded_price:.2f} CHF aktualisiert!")
-                
+                rounded_price = round_price(price)
                 updated_expense = Expense(expense.id, date, rounded_price, description)
                 DataService.update_expense(updated_expense)
+                st.success("Ausgabe aktualisiert!")
                 del st.session_state.edit_expense_id
                 st.rerun()
         with col2:
